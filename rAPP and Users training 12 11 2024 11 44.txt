@@ -1,0 +1,167 @@
+import os
+import gym
+import numpy as np
+import random
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import matplotlib.pyplot as plt
+from google.colab import drive
+drive.mount('/content/drive')
+from collections import deque
+import random
+
+
+# Define the MLP model
+class MLP(nn.Module):
+    def __init__(self, input_dim, output_dim):
+        super(MLP, self).__init__()
+        self.fc1 = nn.Linear(input_dim,64)
+        self.fc2 = nn.Linear(64, 64)
+        self.fc3 = nn.Linear(64, output_dim)
+
+    def forward(self, x):
+        x = torch.relu(self.fc1(x))
+        x = torch.relu(self.fc2(x))
+        return self.fc3(x)
+
+# Define the MADDPG model
+class MADDPG:
+    def __init__(self, state_dim, action_dim):
+        self.actor = MLP(state_dim, action_dim)
+        self.critic = MLP(state_dim + action_dim, 1)
+        self.actor_optimizer = optim.Adam(self.actor.parameters(), lr=0.001)
+        self.critic_optimizer = optim.Adam(self.critic.parameters(), lr=0.001)
+
+    def update(self, state, action, reward, next_state):
+        # Implement the DDPG update logic here (placeholder)
+        pass
+
+# Define the Federated Learning Server
+class FederatedLearningServer:
+    def __init__(self, model, num_agents):
+        self.global_model = model
+        self.num_agents = num_agents
+        self.global_rewards = []  # To store global rewards
+
+    def aggregate_weights(self, local_weights):
+        new_weights = {}
+        for key in local_weights[0].keys():
+            new_weights[key] = torch.mean(torch.stack([local_weights[i][key] for i in range(self.num_agents)]), dim=0)
+        return new_weights
+
+    def broadcast_weights(self):
+        return self.global_model.actor.state_dict()
+
+    def update_global_model(self, local_weights):
+        new_weights = self.aggregate_weights(local_weights)
+        self.global_model.actor.load_state_dict(new_weights)
+
+    def record_global_reward(self, reward):
+        self.global_rewards.append(reward)
+
+# Define the Federated Learning Agent
+class FederatedLearningAgent:
+    def __init__(self, model):
+        self.local_model = model
+        self.local_rewards = []  # To store local rewards
+
+    def train_local_model(self, data):
+        state, action, reward, next_state = data
+        self.local_model.update(state, action, reward, next_state)
+        return reward
+
+    def send_model_update(self):
+        return self.local_model.actor.state_dict()
+
+    def record_local_reward(self, reward):
+        self.local_rewards.append(reward)
+
+# Federated training loop
+def federated_training_loop(server, agents, num_episodes, data):
+    for episode in range(num_episodes):
+        local_weights = []
+        global_rewards = []
+        
+        for agent in agents:
+            agent_rewards = []
+            
+            # Download global model
+            agent.local_model.actor.load_state_dict(server.broadcast_weights())
+            
+            # Train the local model
+            for d in data[agent]:  # data[agent] should be a list of (state, action, reward, next_state)
+                reward = agent.train_local_model(d)
+                agent.record_local_reward(reward)
+                agent_rewards.append(reward)
+            
+            # Collect local model weights
+            local_weights.append(agent.send_model_update())
+            
+            # Average local reward for this agent
+            avg_local_reward = np.mean(agent_rewards)
+            global_rewards.append(avg_local_reward)
+        
+        # Update global model
+        server.update_global_model(local_weights)
+        
+        # Average global reward for this episode
+        avg_global_reward = np.mean(global_rewards)
+        server.record_global_reward(avg_global_reward)
+        print(f"Episode {episode + 1}/{num_episodes} - Global Avg Reward: {avg_global_reward}")
+
+# Example usage
+state_dim =4
+action_dim = 2
+num_agents = 3
+num_episodes =10
+
+global_model = MADDPG(state_dim, action_dim)
+server = FederatedLearningServer(global_model, num_agents)
+agents = [FederatedLearningAgent(MADDPG(state_dim, action_dim)) for _ in range(num_agents)]
+
+# Generate synthetic data for each agent
+data = {agent: [(np.random.randn(state_dim), np.random.randn(action_dim), np.random.randn(1), np.random.randn(state_dim)) for _ in range(100)] for agent in agents}
+
+# Train models
+federated_training_loop(server, agents, num_episodes, data)
+save_dir = '/content/drive/My Drive/user'
+os.makedirs(save_dir, exist_ok=True)
+
+import os
+import matplotlib.pyplot as plt
+import numpy as np
+
+# Function to plot the learning curves
+def plot_learning_curves(server, agents, save_path=None):
+    plt.figure(figsize=(10, 6))
+    
+    # Plot global rewards
+    plt.plot(server.global_rewards, label='rAPP ', color='blue', marker='o')
+    
+    # Plot local rewards
+    for i, agent in enumerate(agents):
+        plt.plot(agent.local_rewards, label=f'User {i + 1} ', marker='x')
+    
+    plt.xlabel('Federation Window', fontsize=26)
+    plt.ylabel('Average Reward', fontsize=26)
+    plt.legend(fontsize=26)
+    plt.grid(True)
+    
+    # Display the plot
+    plt.tight_layout()
+
+    # Save the plot if a path is provided
+    if save_path:
+        plt.savefig(save_path, format='pdf')
+        print(f"Plot saved to {save_path}")
+    
+    # Show the plot
+    plt.show()
+
+# Example of saving to Google Drive
+save_dir = '/content/drive/My Drive/user'
+os.makedirs(save_dir, exist_ok=True)
+
+# Call the function to plot and save the learning curve
+plot_learning_curves(server, agents, save_path=os.path.join(save_dir, 'userAzz.pdf'))
